@@ -1,0 +1,7 @@
+postman request POST 'http://localhost:8080/payroll/calculate' \
+  --header 'Content-Type: application/json' \
+  --body '{
+  "hoursWorked":40,
+  "overtimeHours":5,
+  "hourlyRate":20
+}'

@@ -2,6 +2,7 @@ package com.payroll.service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.util.Objects;
 
 import org.springframework.stereotype.Service;
@@ -13,25 +14,18 @@ import com.payroll.model.PayrollResult;
 @Service
 public class PayrollService {
 
-    private static final BigDecimal OT_RATE =
-            new BigDecimal("1.5");
+    private final StatePayrollRuleResolver statePayrollRuleResolver;
 
-    private static final BigDecimal FICA_RATE =
-            new BigDecimal("0.0765");
-
-    private static final BigDecimal FUTA_RATE =
-            new BigDecimal("0.006");
-
-    private static final BigDecimal SUTA_RATE =
-            new BigDecimal("0.027");
-
-    private static final BigDecimal FED_TAX_RATE =
-            new BigDecimal("0.10");
-
-    private static final BigDecimal MIN_WAGE =
-            new BigDecimal("14.00");
+    public PayrollService(StatePayrollRuleResolver statePayrollRuleResolver) {
+        this.statePayrollRuleResolver = statePayrollRuleResolver;
+    }
 
     public PayrollResult calculate(PayrollInput input) {
+        PayrollRulesSnapshot rules = resolveRulesForInput(input);
+        return calculate(input, rules);
+    }
+
+    public PayrollResult calculate(PayrollInput input, PayrollRulesSnapshot rules) {
         Objects.requireNonNull(input, "Payroll input is required");
         validateAmount(input.getHoursWorked(), "hoursWorked");
         validateAmount(input.getOvertimeHours(), "overtimeHours");
@@ -40,7 +34,7 @@ public class PayrollService {
         PayrollResult result =
                 new PayrollResult();
 
-        boolean minWageValid = isMinimumWageValid(input.getHourlyRate());
+        boolean minWageValid = isMinimumWageValid(input.getHourlyRate(), rules);
 
         result.setMinimumWageValid(minWageValid);
 
@@ -51,22 +45,22 @@ public class PayrollService {
         BigDecimal overtimePay =
                 input.getOvertimeHours()
                         .multiply(input.getHourlyRate())
-                        .multiply(OT_RATE);
+                        .multiply(rules.overtimeRateMultiplier());
 
         BigDecimal grossPay =
                 regularPay.add(overtimePay);
 
         BigDecimal fica =
-                grossPay.multiply(FICA_RATE);
+                grossPay.multiply(rules.ficaRate());
 
         BigDecimal futa =
-                grossPay.multiply(FUTA_RATE);
+                grossPay.multiply(rules.futaRate());
 
         BigDecimal suta =
-                grossPay.multiply(SUTA_RATE);
+                grossPay.multiply(rules.sutaRate());
 
         BigDecimal federalTax =
-                grossPay.multiply(FED_TAX_RATE);
+                grossPay.multiply(rules.federalTaxRate());
 
         BigDecimal totalDeductions =
                 fica
@@ -96,12 +90,24 @@ public class PayrollService {
     }
 
     public boolean isMinimumWageValid(BigDecimal hourlyRate) {
+        return isMinimumWageValid(hourlyRate, statePayrollRuleResolver.defaults());
+    }
+
+    public boolean isMinimumWageValid(BigDecimal hourlyRate, PayrollRulesSnapshot rules) {
         validateAmount(hourlyRate, "hourlyRate");
-        return hourlyRate.compareTo(MIN_WAGE) >= 0;
+        return hourlyRate.compareTo(rules.minimumWage()) >= 0;
     }
 
     public BigDecimal getMinimumWage() {
-        return MIN_WAGE;
+        return statePayrollRuleResolver.defaults().minimumWage();
+    }
+
+    private PayrollRulesSnapshot resolveRulesForInput(PayrollInput input) {
+        if (input == null || input.getStateCode() == null || input.getStateCode().isBlank()) {
+            return statePayrollRuleResolver.defaults();
+        }
+        LocalDate asOfDate = input.getAsOfDate() == null ? LocalDate.now() : input.getAsOfDate();
+        return statePayrollRuleResolver.resolveForStateAndDate(input.getStateCode(), asOfDate);
     }
 
     private void validateAmount(BigDecimal value, String fieldName) {

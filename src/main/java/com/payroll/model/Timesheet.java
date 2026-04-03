@@ -31,6 +31,9 @@ public class Timesheet {
     @Column(nullable = false, length = 100)
     private String employeeId;
 
+    @Column(nullable = false, length = 2)
+    private String stateCode;
+
     @Column(nullable = false)
     private LocalDate weekStart;
 

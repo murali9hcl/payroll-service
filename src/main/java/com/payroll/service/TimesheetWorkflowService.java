@@ -19,13 +19,12 @@ import com.payroll.repository.TimesheetRepository;
 @Transactional
 public class TimesheetWorkflowService {
 
-    private static final BigDecimal AI_WARNING_THRESHOLD = new BigDecimal("32.00");
-    private static final BigDecimal OVERTIME_THRESHOLD = new BigDecimal("40.00");
-
     private final TimesheetRepository timesheetRepository;
+    private final StatePayrollRuleResolver statePayrollRuleResolver;
 
-    public TimesheetWorkflowService(TimesheetRepository timesheetRepository) {
+    public TimesheetWorkflowService(TimesheetRepository timesheetRepository, StatePayrollRuleResolver statePayrollRuleResolver) {
         this.timesheetRepository = timesheetRepository;
+        this.statePayrollRuleResolver = statePayrollRuleResolver;
     }
 
     public TimesheetResponse submit(TimesheetSubmissionRequest request) {
@@ -33,6 +32,7 @@ public class TimesheetWorkflowService {
 
         Timesheet timesheet = new Timesheet();
         timesheet.setEmployeeId(request.employeeId().trim());
+        timesheet.setStateCode(normalizeStateCode(request.stateCode()));
         timesheet.setPayrollPeriod(request.payrollPeriod().trim());
         timesheet.setWeekStart(request.weekStart());
         timesheet.setWeekEnd(request.weekEnd());
@@ -40,7 +40,10 @@ public class TimesheetWorkflowService {
         timesheet.setOvertimeHours(request.overtimeHours());
         timesheet.setHourlyRate(request.hourlyRate());
         timesheet.setStatus(TimesheetStatus.SUBMITTED);
-        timesheet.setAiRiskWarning(totalHours(timesheet).compareTo(AI_WARNING_THRESHOLD) >= 0);
+        PayrollRulesSnapshot ruleSet = statePayrollRuleResolver.resolveForStateAndDate(
+                timesheet.getStateCode(),
+                timesheet.getWeekEnd());
+        timesheet.setAiRiskWarning(totalHours(timesheet).compareTo(ruleSet.aiWarningThreshold()) >= 0);
         timesheet.setOvertimeFlag(false);
         timesheet.setSubmittedAt(Instant.now());
 
@@ -65,12 +68,15 @@ public class TimesheetWorkflowService {
         requireSubmitted(timesheet, "approve");
 
         BigDecimal totalHours = totalHours(timesheet);
+        PayrollRulesSnapshot ruleSet = statePayrollRuleResolver.resolveForStateAndDate(
+                timesheet.getStateCode(),
+                timesheet.getWeekEnd());
         timesheet.setStatus(TimesheetStatus.APPROVED);
         timesheet.setApprovedBy(request.managerId().trim());
         timesheet.setApprovalNotes(request.notes());
         timesheet.setDecisionAt(Instant.now());
-        timesheet.setAiRiskWarning(totalHours.compareTo(AI_WARNING_THRESHOLD) >= 0);
-        timesheet.setOvertimeFlag(totalHours.compareTo(OVERTIME_THRESHOLD) > 0);
+        timesheet.setAiRiskWarning(totalHours.compareTo(ruleSet.aiWarningThreshold()) >= 0);
+        timesheet.setOvertimeFlag(totalHours.compareTo(ruleSet.overtimeThreshold()) > 0);
 
         return toResponse(timesheetRepository.save(timesheet));
     }
@@ -109,10 +115,19 @@ public class TimesheetWorkflowService {
         return timesheet.getHoursWorked().add(timesheet.getOvertimeHours());
     }
 
+    private String normalizeStateCode(String stateCode) {
+        String normalized = stateCode.trim().toUpperCase();
+        if (normalized.length() != 2) {
+            throw new IllegalArgumentException("stateCode must be a 2-letter code");
+        }
+        return normalized;
+    }
+
     private TimesheetResponse toResponse(Timesheet timesheet) {
         return new TimesheetResponse(
                 timesheet.getId(),
                 timesheet.getEmployeeId(),
+                timesheet.getStateCode(),
                 timesheet.getPayrollPeriod(),
                 timesheet.getWeekStart(),
                 timesheet.getWeekEnd(),

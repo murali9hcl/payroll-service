@@ -30,25 +30,23 @@ import com.payroll.repository.TimesheetRepository;
 @Transactional
 public class PayrollRunWorkflowService {
 
-    private static final BigDecimal STANDARD_WEEK_HOURS = new BigDecimal("40.00");
-    private static final BigDecimal EXCESSIVE_HOURS_FLAG = new BigDecimal("45.00");
-    private static final BigDecimal EXCESSIVE_HOURS_BLOCK = new BigDecimal("60.00");
-    private static final BigDecimal OVERTIME_WARNING_HOURS = new BigDecimal("15.00");
-
     private final PayrollRunRepository payrollRunRepository;
     private final TimesheetRepository timesheetRepository;
     private final PayslipRepository payslipRepository;
     private final PayrollService payrollService;
+    private final StatePayrollRuleResolver statePayrollRuleResolver;
 
     public PayrollRunWorkflowService(
             PayrollRunRepository payrollRunRepository,
             TimesheetRepository timesheetRepository,
             PayslipRepository payslipRepository,
-            PayrollService payrollService) {
+            PayrollService payrollService,
+            StatePayrollRuleResolver statePayrollRuleResolver) {
         this.payrollRunRepository = payrollRunRepository;
         this.timesheetRepository = timesheetRepository;
         this.payslipRepository = payslipRepository;
         this.payrollService = payrollService;
+        this.statePayrollRuleResolver = statePayrollRuleResolver;
     }
 
     public PayrollRunResponse createRun(PayrollRunRequest request) {
@@ -100,39 +98,42 @@ public class PayrollRunWorkflowService {
         List<AnomalyResponse> anomalies = new ArrayList<>();
         for (Timesheet timesheet : timesheets) {
             BigDecimal totalHours = timesheet.getHoursWorked().add(timesheet.getOvertimeHours());
-            if (!payrollService.isMinimumWageValid(timesheet.getHourlyRate())) {
+            PayrollRulesSnapshot ruleSet = statePayrollRuleResolver.resolveForStateAndDate(
+                    timesheet.getStateCode(),
+                    timesheet.getWeekEnd());
+            if (!payrollService.isMinimumWageValid(timesheet.getHourlyRate(), ruleSet)) {
                 anomalies.add(new AnomalyResponse(
                         timesheet.getId(),
                         timesheet.getEmployeeId(),
-                        "Hourly rate below Florida minimum wage threshold",
+                        "Hourly rate below configured minimum wage threshold for the state",
                         AnomalySeverity.BLOCK,
-                        payrollService.getMinimumWage(),
+                        ruleSet.minimumWage(),
                         timesheet.getHourlyRate()));
             }
-            if (totalHours.compareTo(EXCESSIVE_HOURS_BLOCK) > 0) {
+            if (totalHours.compareTo(ruleSet.excessiveHoursBlock()) > 0) {
                 anomalies.add(new AnomalyResponse(
                         timesheet.getId(),
                         timesheet.getEmployeeId(),
                         "Hours are high enough to block payroll pending HR review",
                         AnomalySeverity.BLOCK,
-                        STANDARD_WEEK_HOURS,
+                        ruleSet.standardWeekHours(),
                         totalHours));
-            } else if (totalHours.compareTo(EXCESSIVE_HOURS_FLAG) > 0) {
+            } else if (totalHours.compareTo(ruleSet.excessiveHoursFlag()) > 0) {
                 anomalies.add(new AnomalyResponse(
                         timesheet.getId(),
                         timesheet.getEmployeeId(),
                         "Hours exceed the normal work week and should be reviewed",
                         AnomalySeverity.FLAG,
-                        STANDARD_WEEK_HOURS,
+                        ruleSet.standardWeekHours(),
                         totalHours));
             }
-            if (timesheet.getOvertimeHours().compareTo(OVERTIME_WARNING_HOURS) > 0) {
+            if (timesheet.getOvertimeHours().compareTo(ruleSet.overtimeWarningHours()) > 0) {
                 anomalies.add(new AnomalyResponse(
                         timesheet.getId(),
                         timesheet.getEmployeeId(),
                         "Overtime exceeds the threshold used by the anomaly agent",
                         AnomalySeverity.FLAG,
-                        OVERTIME_WARNING_HOURS,
+                        ruleSet.overtimeWarningHours(),
                         timesheet.getOvertimeHours()));
             }
         }
@@ -209,7 +210,10 @@ public class PayrollRunWorkflowService {
     }
 
     private Payslip buildPayslip(PayrollRun run, Timesheet timesheet, String bankFileReference, Instant generatedAt) {
-        PayrollResult result = payrollService.calculate(toInput(timesheet));
+        PayrollRulesSnapshot ruleSet = statePayrollRuleResolver.resolveForStateAndDate(
+                timesheet.getStateCode(),
+                timesheet.getWeekEnd());
+        PayrollResult result = payrollService.calculate(toInput(timesheet), ruleSet);
 
         Payslip payslip = new Payslip();
         payslip.setPayrollRun(run);
@@ -236,6 +240,8 @@ public class PayrollRunWorkflowService {
         input.setHoursWorked(timesheet.getHoursWorked());
         input.setOvertimeHours(timesheet.getOvertimeHours());
         input.setHourlyRate(timesheet.getHourlyRate());
+        input.setStateCode(timesheet.getStateCode());
+        input.setAsOfDate(timesheet.getWeekEnd());
         return input;
     }
 
@@ -249,7 +255,10 @@ public class PayrollRunWorkflowService {
         BigDecimal totalGrossPay = BigDecimal.ZERO;
         BigDecimal totalNetPay = BigDecimal.ZERO;
         for (Timesheet timesheet : timesheets) {
-            PayrollResult result = payrollService.calculate(toInput(timesheet));
+            PayrollRulesSnapshot ruleSet = statePayrollRuleResolver.resolveForStateAndDate(
+                    timesheet.getStateCode(),
+                    timesheet.getWeekEnd());
+            PayrollResult result = payrollService.calculate(toInput(timesheet), ruleSet);
             totalGrossPay = totalGrossPay.add(result.getGrossPay());
             totalNetPay = totalNetPay.add(result.getNetPay());
         }

@@ -9,6 +9,7 @@ import jakarta.validation.constraints.NotNull;
 
 public record TimesheetSubmissionRequest(
         @NotBlank String employeeId,
+        @NotBlank String stateCode,
         @NotBlank String payrollPeriod,
         @NotNull LocalDate weekStart,
         @NotNull LocalDate weekEnd,

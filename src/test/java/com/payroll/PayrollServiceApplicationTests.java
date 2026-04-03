@@ -33,9 +33,12 @@ class PayrollServiceApplicationTests {
 
 	@Test
 	void payrollWorkflowRunsEndToEnd() throws Exception {
+		seedStateRule("FL", "2026-01-01", null, "14.00");
+
 		String timesheetPayload = """
 				{
 				  "employeeId": "EMP-100",
+				  "stateCode": "FL",
 				  "payrollPeriod": "2026-W14",
 				  "weekStart": "2026-03-30",
 				  "weekEnd": "2026-04-03",
@@ -135,6 +138,37 @@ class PayrollServiceApplicationTests {
 			throw new IllegalStateException("Could not find id in response: " + result.getResponse().getContentAsString());
 		}
 		return Long.parseLong(matcher.group(1));
+	}
+
+	private void seedStateRule(String stateCode, String effectiveStart, String effectiveEnd, String minimumWage) throws Exception {
+		String payload = """
+				{
+				  "stateCode": "%s",
+				  "effectiveStart": "%s",
+				  "effectiveEnd": %s,
+				  "overtimeRateMultiplier": 1.5,
+				  "ficaRate": 0.0765,
+				  "futaRate": 0.006,
+				  "sutaRate": 0.027,
+				  "federalTaxRate": 0.10,
+				  "minimumWage": %s,
+				  "standardWeekHours": 40.00,
+				  "excessiveHoursFlag": 45.00,
+				  "excessiveHoursBlock": 60.00,
+				  "overtimeWarningHours": 15.00,
+				  "aiWarningThreshold": 32.00,
+				  "overtimeThreshold": 40.00
+				}
+				""".formatted(
+						stateCode,
+						effectiveStart,
+						effectiveEnd == null ? "null" : "\"" + effectiveEnd + "\"",
+						minimumWage);
+
+		mockMvc.perform(post("/payroll/admin/state-rules")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(payload))
+				.andExpect(status().isOk());
 	}
 
 }

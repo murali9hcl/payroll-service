@@ -9,6 +9,7 @@ import com.payroll.model.TimesheetStatus;
 public record TimesheetResponse(
         Long id,
         String employeeId,
+        String stateCode,
         String payrollPeriod,
         LocalDate weekStart,
         LocalDate weekEnd,

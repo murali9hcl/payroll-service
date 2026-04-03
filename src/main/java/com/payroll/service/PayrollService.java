@@ -2,6 +2,7 @@ package com.payroll.service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Objects;
 
 import org.springframework.stereotype.Service;
 
@@ -31,21 +32,17 @@ public class PayrollService {
             new BigDecimal("14.00");
 
     public PayrollResult calculate(PayrollInput input) {
+        Objects.requireNonNull(input, "Payroll input is required");
+        validateAmount(input.getHoursWorked(), "hoursWorked");
+        validateAmount(input.getOvertimeHours(), "overtimeHours");
+        validateAmount(input.getHourlyRate(), "hourlyRate");
 
         PayrollResult result =
                 new PayrollResult();
 
-        boolean minWageValid =
-                input.getHourlyRate()
-                        .compareTo(MIN_WAGE) >= 0;
+        boolean minWageValid = isMinimumWageValid(input.getHourlyRate());
 
         result.setMinimumWageValid(minWageValid);
-
-        if (!minWageValid) {
-
-            throw new RuntimeException(
-                    "Hourly rate below minimum wage");
-        }
 
         BigDecimal regularPay =
                 input.getHoursWorked()
@@ -96,6 +93,24 @@ public class PayrollService {
         result.setNetPay(scale(netPay));
 
         return result;
+    }
+
+    public boolean isMinimumWageValid(BigDecimal hourlyRate) {
+        validateAmount(hourlyRate, "hourlyRate");
+        return hourlyRate.compareTo(MIN_WAGE) >= 0;
+    }
+
+    public BigDecimal getMinimumWage() {
+        return MIN_WAGE;
+    }
+
+    private void validateAmount(BigDecimal value, String fieldName) {
+        if (value == null) {
+            throw new IllegalArgumentException(fieldName + " is required");
+        }
+        if (value.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException(fieldName + " cannot be negative");
+        }
     }
 
     private BigDecimal scale(BigDecimal value) {
